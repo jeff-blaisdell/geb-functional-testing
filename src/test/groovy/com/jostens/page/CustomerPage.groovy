@@ -29,6 +29,9 @@ class CustomerPage extends Page {
         }
 
         clickSubCatalogLink { catalogName ->
+
+            waitFor { findCatalogTitle(catalogName, subCatalogTitles) }
+
             def catalogLink = findCatalogTitle(catalogName, subCatalogTitles).parent()
             catalogLink.click()
         }
