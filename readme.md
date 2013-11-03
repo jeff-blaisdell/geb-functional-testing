@@ -2,9 +2,7 @@ The containing project is an experiment at utilizing Geb / Spock / Gradle to per
 
 https://github.com/geb/geb-example-gradle
 
-The following is from the readme file from the above mentioned project and will work with this experiment.
-
-This is an example of incorporating Geb into a Gradle build. It shows the use of Spock.
+The following is from the readme file from the above mentioned project and will work with this experiment:
 
 The build is setup to work with HTMLUnit, FireFox and Chrome. Have a look at the `build.gradle` and the `src/test/resources/GebConfig.groovy` files.
 
