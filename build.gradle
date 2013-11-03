@@ -1,0 +1,45 @@
+apply plugin: "groovy"
+apply plugin: "idea"
+
+repositories {
+    mavenCentral()
+}
+
+// The drivers we want to use
+ext.drivers = ["firefox", "chrome"]
+
+dependencies {
+    def gebVersion = "0.9.2"
+    def seleniumVersion = "2.37.1"
+
+    // If using Spock, need to depend on geb-spock
+    testCompile "org.gebish:geb-spock:$gebVersion"
+    testCompile "org.spockframework:spock-core:0.7-groovy-2.0"
+
+    // Drivers
+    drivers.each { driver ->
+        testCompile "org.seleniumhq.selenium:selenium-$driver-driver:$seleniumVersion"
+    }
+}
+
+drivers.each { driver ->
+    task "${driver}Test"(type: Test) {
+        testReportDir = reporting.file("$name/tests")
+        testResultsDir = file("$buildDir/test-results/$name")
+
+        systemProperty "geb.build.reportsDir", reporting.file("$name/geb")
+        systemProperty "geb.env", driver
+
+        // If you wanted to set the baseUrl in your build…
+        // systemProperty "geb.build.baseUrl", "http://myapp.com"
+    }
+}
+
+test {
+	dependsOn drivers.collect { tasks["${it}Test"] }
+	enabled = false
+}
+
+task wrapper(type: Wrapper) {
+    gradleVersion = '1.5'
+}
