@@ -1,45 +1,325 @@
-apply plugin: "groovy"
-apply plugin: "idea"
+import com.saucelabs.common.SauceOnDemandAuthentication;
+import com.saucelabs.common.Utils;
+import com.saucelabs.saucerest.SauceREST;
+import org.gradle.api.tasks.testing.TestDescriptor;
+import org.gradle.api.tasks.testing.TestResult;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import static groovy.io.FileType.FILES;
 
-repositories {
-    mavenCentral()
+apply plugin: "groovy"
+apply plugin: "java"
+apply plugin: "idea"
+apply plugin: "eclipse"
+
+
+def getTimestamp = {
+    def today = new Date();
+    return today.format("yyyy-MM-dd-HHmmss")
 }
 
-// The drivers we want to use
-ext.drivers = ["firefox", "chrome"]
+/**
+ * The 'ext' property provides global configuration to tasks.
+ * @see "http://www.gradle.org/docs/current/dsl/org.gradle.api.plugins.ExtraPropertiesExtension.html"
+ */
+ext.timestamp = getTimestamp()
+ext.buildName = "$timestamp"
+ext.tagName = "jcom-test-suite"
+
+def sauce = [
+    userName: "username",
+    apiKey: "key"
+]
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven {
+        url "https://repository-saucelabs.forge.cloudbees.com/release"
+    }
+}
+
+buildscript {
+    repositories {
+        mavenCentral()
+        maven {
+            url "https://repository-saucelabs.forge.cloudbees.com/release"
+        }
+    }
+    dependencies {
+        classpath "com.saucelabs:saucerest:1.0.2"
+        classpath "com.saucelabs:sauce_java_common:1.0.14"
+        classpath "com.saucelabs:sauce-connect:3.0.24"
+        classpath("com.saucelabs:ci-sauce:1.29") {
+            transitive = false
+        }
+        classpath "commons-io:commons-io:1.4"
+        classpath "commons-lang:commons-lang:2.6"
+    }
+}
+
+/**
+ * By default gradle will not copy xml files located in the java src directory.
+ * The following config will pull resources from both the main/resources and main/java
+ * directories into the built output.
+ */
+sourceSets {
+    main {
+        resources {
+            srcDir 'src/main/java'
+            srcDir 'src/main/resources'
+        }
+    }
+}
 
 dependencies {
     def gebVersion = "0.9.2"
     def seleniumVersion = "2.37.1"
 
-    // If using Spock, need to depend on geb-spock
+    compile "org.springframework:spring-context:4.0.0.RELEASE"
+    compile "org.springframework:spring-test:4.0.0.RELEASE"
+    compile "org.springframework:spring-jdbc:4.0.0.RELEASE"
+    compile "org.springframework:spring-tx:4.0.0.RELEASE"
+    compile "org.aspectj:aspectjrt:1.7.4"
+    compile "org.mybatis:mybatis:3.2.4"
+    compile "org.mybatis:mybatis-spring:1.2.2"
+    compile "commons-lang:commons-lang:2.6"
+    compile "commons-collections:commons-collections:3.2.1"
+    compile "commons-dbcp:commons-dbcp:1.4"
+    compile "commons-pool:commons-pool:1.5.5"
+    compile "net.sourceforge.jtds:jtds:1.3.1"
+    //compile "log4j:log4j:1.2.17"
+    compile "org.codehaus.groovy:groovy-all:2.2.0"
+    compile "javax.xml:jaxb-api:2.1"
+    compile "javax.xml:jaxb-impl:2.1"
+    compile "com.saucelabs:saucerest:1.0.2"
+    compile "com.saucelabs:sauce_java_common:1.0.14"
     testCompile "org.gebish:geb-spock:$gebVersion"
+    testCompile "org.spockframework:spock-spring:0.7-groovy-2.0"
     testCompile "org.spockframework:spock-core:0.7-groovy-2.0"
-
-    // Drivers
-    drivers.each { driver ->
-        testCompile "org.seleniumhq.selenium:selenium-$driver-driver:$seleniumVersion"
-    }
+    testCompile "org.seleniumhq.selenium:selenium-java:2.25.+"
 }
 
-drivers.each { driver ->
-    task "${driver}Test"(type: Test) {
-        testReportDir = reporting.file("$name/tests")
-        testResultsDir = file("$buildDir/test-results/$name")
-
-        systemProperty "geb.build.reportsDir", reporting.file("$name/geb")
-        systemProperty "geb.env", driver
-
-        // If you wanted to set the baseUrl in your build…
-        // systemProperty "geb.build.baseUrl", "http://myapp.com"
-    }
-}
-
-test {
-	dependsOn drivers.collect { tasks["${it}Test"] }
-	enabled = false
-}
 
 task wrapper(type: Wrapper) {
-    gradleVersion = '1.5'
+    gradleVersion = '1.10'
 }
+
+task cleanBuild(type: Delete) {
+    delete './build'
+}
+
+tasks.withType(Test) {
+    /**
+     * Define Global Task System Properties.
+     */
+    systemProperty "sauce.user.name", sauce.userName
+    systemProperty "sauce.api.key", sauce.apiKey
+    systemProperty "geb.task.name", "$name"
+    systemProperty "buildName", "$buildName"
+    systemProperty "tagName", "$tagName"
+    systemProperty 'geb.build.reportsDir', reporting.file("$name/geb")
+    testReportDir = reporting.file("$name/tests")
+    testResultsDir = file("$buildDir/test-results/$name")
+}
+
+task openSauceTunnel(type: DefaultTask) {
+    doFirst {
+        if(sauce.userName && sauce.apiKey) {
+            sauce.connect = new com.saucelabs.ci.sauceconnect.SauceConnectTwoManager()
+            sauce.connect.openConnection(sauce.userName, sauce.apiKey, 4445, null, null, null, null)
+        }
+    }
+}
+
+task closeSauceTunnel(type: DefaultTask) {
+    doLast {
+        sauce.connect?.closeTunnelsForPlan(sauce.userName, null)
+    }
+}
+
+task updateSauce(type: UpdateSauce) {
+    sauceUserName = sauce.userName
+    sauceApiKey = sauce.apiKey
+    testResultsDir = "./build/test-results"
+}
+
+task windows7Chrome(type: Test) {
+    dependsOn openSauceTunnel
+    finalizedBy closeSauceTunnel, updateSauce
+    systemProperty 'geb.env', 'windows7-chrome'
+}
+
+task temp(type: DefaultTask) {
+    finalizedBy updateSauce
+}
+
+class UpdateSauce extends DefaultTask {
+
+
+    String sessionIdPattern = "SauceOnDemandSessionID=(.+)";
+    String testResultFilePattern = "TEST-.*\\.xml";
+    String xmlTestSuiteNamePattern = "\\<testsuite name=\"(.*?)\"";
+    String xmlFailurePattern = "\\<testsuite.*failures=\"(.*?)\"";
+    String xmlErrorPattern = "\\<testsuite.*errors=\"(.*?)\""
+    String xmlTestsPattern = "\\<testsuite.*tests=\"(.*?)\""
+    String testResultsDir = "./build/test-results";
+    String sauceUserName = null;
+    String sauceApiKey = null;
+    List<File> files = new ArrayList<File>()
+    Map sessions = new HashMap()
+    private SauceREST sauceREST
+
+
+    @TaskAction
+    def action() {
+
+        if (sauceUserName == null || sauceApiKey == null) {
+            return
+        }
+
+        init()
+
+        if (files != null && files.size() > 0) {
+             parseFiles()
+        }
+    }
+
+    def init() {
+       def sauceOnDemandAuthentication = new SauceOnDemandAuthentication(sauceUserName, sauceApiKey)
+       this.sauceREST = new SauceREST(sauceOnDemandAuthentication.getUsername(), sauceOnDemandAuthentication.getAccessKey());
+
+        new File(testResultsDir).eachFileRecurse(FILES) {
+            if(it.name.matches(testResultFilePattern)) {
+                files.add(it)
+            }
+        }
+    }
+
+    def parseFiles() {
+
+        Integer totalTestCount = 0
+        Integer totalFailureCount = 0
+
+        for (File file in files) {
+            String sessionId = null
+            String testSuiteName = null
+            Integer failureCount = null
+            Integer errorCount = null
+            Integer testCount = null
+            boolean failed = false
+
+            file.eachLine {
+                String line = it
+                Pattern pattern = Pattern.compile(sessionIdPattern);
+                Matcher matcher = pattern.matcher(line);
+                if (matcher.find()) {
+                    sessionId = matcher.group(1);
+                }
+
+                pattern = Pattern.compile(xmlTestSuiteNamePattern);
+                matcher = pattern.matcher(line);
+                if (matcher.find()) {
+                    testSuiteName = matcher.group(1);
+                }
+
+                pattern = Pattern.compile(xmlFailurePattern);
+                matcher = pattern.matcher(line);
+                if (matcher.find()) {
+                    failureCount = Integer.parseInt(matcher.group(1));
+                }
+
+                pattern = Pattern.compile(xmlErrorPattern);
+                matcher = pattern.matcher(line);
+                if (matcher.find()) {
+                    errorCount = Integer.parseInt(matcher.group(1));
+                }
+
+                pattern = Pattern.compile(xmlTestsPattern);
+                matcher = pattern.matcher(line);
+                if (matcher.find()) {
+                    testCount = Integer.parseInt(matcher.group(1));
+                }
+            }
+
+            if (sessionId) {
+
+                failureCount = (failureCount ?: 0)
+                errorCount = (errorCount ?: 0)
+                testCount = (testCount ?: 0)
+
+                def session = sessions[sessionId]
+
+                println "TestSuite=" + testSuiteName
+                println "Session=" + sessionId
+                println "Tests=" + testCount
+                println "Failures=" + failureCount
+                println "Errors=" + errorCount
+
+                totalTestCount = totalTestCount + testCount
+
+                if (errorCount > 0 || failureCount > 0) {
+                    println "marking test as failed."
+                    failed = true
+                    totalFailureCount++
+                } else if (errorCount == 0 && failureCount == 0 && testCount > 0) {
+                    println "marking test as passed."
+                    failed = false
+                }
+
+                if (session && session.failed) {
+                    continue
+                }
+                sessions[sessionId] = [failed: failed, id: sessionId]
+            }
+        }
+        if (sessions) {
+            for (s in sessions) {
+                def session = sessions[s.key]
+                if (session.failed) {
+                    markJobAsFailed(session.id as String)
+                } else {
+                    markJobAsPassed(session.id as String)
+                }
+            }
+        }
+        println "Finished tests ran " + totalTestCount + " tests. " + totalFailureCount + " tests failed. Success rate of " + (((totalTestCount - totalFailureCount) / totalTestCount) * 100) + "%."
+    }
+
+    def markJobAsFailed(String sessionId) {
+        try {
+            if (this.sauceREST != null && sessionId != null) {
+                Map<String, Object> updates = new HashMap<String, Object>();
+                updates.put("passed", false);
+                Utils.addBuildNumberToUpdate(updates);
+                sauceREST.updateJobInfo(sessionId, updates);
+            }
+        } catch (IOException ioe) {
+            ioe.printStackTrace();
+            throw new RuntimeException(ioe);
+        }
+    }
+
+    /**
+     * Marks a Sauce job as passed.
+     * @param sessionId the Sauce job id
+     */
+    def markJobAsPassed(String sessionId) {
+        try {
+            if (this.sauceREST != null && sessionId != null) {
+                Map<String, Object> updates = new HashMap<String, Object>();
+                updates.put("passed", true);
+                Utils.addBuildNumberToUpdate(updates);
+                sauceREST.updateJobInfo(sessionId, updates);
+            }
+
+        } catch (IOException ioe) {
+            ioe.printStackTrace();
+            throw new RuntimeException(ioe);
+        }
+    }
+
+}
+
+
+

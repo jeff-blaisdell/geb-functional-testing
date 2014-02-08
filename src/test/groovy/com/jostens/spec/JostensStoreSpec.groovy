@@ -5,8 +5,17 @@ import com.jostens.page.ProductBrowsePage
 import com.jostens.page.ProductDetailPage
 import com.jostens.page.ShoppingCartPage
 import geb.spock.GebReportingSpec
+import org.openqa.selenium.remote.RemoteWebDriver
+import spock.lang.Ignore
 
 class JostensStoreSpec extends GebReportingSpec {
+
+    def setup() {
+        if (driver && driver instanceof RemoteWebDriver) {
+            String sessionId = (((RemoteWebDriver) driver).getSessionId()).toString();
+            System.out.println("SauceOnDemandSessionID=" + sessionId);
+        }
+    }
 
     def "I should be able to navigate to the school store page and purchase products."() {
 
